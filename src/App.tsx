@@ -8,24 +8,25 @@ function App() {
     isRunning,
     remaining,
     sessionCount,
-    task,
     history,
     settings,
     setSettings,
     startTimer,
     pauseTimer,
     resetTimer,
-    setTask,
     requestNotificationPermission,
     progress,
   } = useTimer();
 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [showPulse, setShowPulse] = useState(false);
-  const [taskList, setTaskList] = useState<string[]>([]);
   // Video state
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [videoId, setVideoId] = useState<string>('');
+
+  // Checklist state
+  const [checklistInput, setChecklistInput] = useState('');
+  const [checklistItems, setChecklistItems] = useState<Array<{id:string, text:string, checked:boolean}>>([]);
 
   // Format time as MM:SS
   const formatTime = (seconds: number) => {
@@ -47,13 +48,6 @@ function App() {
     return match ? match[1] : null;
   }
 
-  const handleSubmitTask = () => {
-    const trimmed = task.trim();
-    if (trimmed) {
-      setTaskList(prev => [...prev, trimmed]);
-      setTask('');
-    }
-  };
   const handleVideoSubmit = () => {
     if (!videoUrl.trim()) {
       alert('Please enter a YouTube URL');
@@ -74,6 +68,27 @@ function App() {
     setVideoId('');
     setVideoUrl('');
     localStorage.removeItem('pomodoro-video-url');
+  };
+
+  const handleAddChecklistItem = () => {
+    const trimmed = checklistInput.trim();
+    if (trimmed) {
+      const newItem = {
+        id: crypto.randomUUID(),
+        text: trimmed,
+        checked: false,
+      };
+      setChecklistItems(prev => [...prev, newItem]);
+      setChecklistInput('');
+    }
+  };
+
+  const handleToggleChecklistItem = (id: string) => {
+    setChecklistItems(prev =>
+      prev.map(item =>
+        item.id === id ? { ...item, checked: !item.checked } : item
+      )
+    );
   };
 
   
@@ -109,7 +124,7 @@ function App() {
       className={`min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-gray-900 to-gray-800 text-white px-4 py-8 sm:py-12 transition-all duration-500 ${showPulse ? 'scale-105' : 'scale-100'}`}
     >
       {/* Timer Display */}
-      <div className="relative w-48 h-48 mx-auto mb-6">
+      <div className="relative w-60 h-60 mx-auto mb-6">
         {/* Circular Progress Ring */}
         <svg
           className="absolute inset-0"
@@ -156,32 +171,30 @@ function App() {
         </div>
       </div>
 
-      {/* Task Input */}
+      {/* Checklist Input */}
       <div className="mb-6 flex flex-col space-y-2">
-        <label htmlFor="task-input" className="block text-sm font-manrope mb-2">
-          Current Task:
+        <label htmlFor="checklist-input" className="block text-sm font-manrope mb-2">
+          Checklist:
         </label>
         <div className="flex space-x-2">
           <input
-            id="task-input"
+            id="checklist-input"
             type="text"
-            value={task}
-            onChange={(e) => setTask(e.target.value)}
+            value={checklistInput}
+            onChange={(e) => setChecklistInput(e.target.value)}
             onKeyDown={(e) => {
-                console.log('Task input keydown:', e.key);
                 if (e.key === 'Enter') {
-                    handleSubmitTask();
+                    handleAddChecklistItem();
                 }
-                // Allow spacebar and other keys to behave normally
             }}
-            placeholder="What are you working on?"
+            placeholder="Add a checklist item..."
             className="flex-1 px-4 py-2 bg-gray-800/50 border border-gray-700 rounded-lg focus:border-accent-400 focus:outline-none focus:ring-2 focus:ring-accent-400/50 text-white text-lg font-manrope"
           />
           <button
-            onClick={handleSubmitTask}
+            onClick={handleAddChecklistItem}
             className="px-4 py-2 bg-accent-500 hover:bg-accent-600 text-white rounded-lg font-manrope"
           >
-            Add Task
+            Add
           </button>
         </div>
       </div>
@@ -202,17 +215,32 @@ function App() {
           Reset
         </button>
       </div>
-      {/* Task List */}
+      {/* Checklist Items */}
       <div className="mb-4 bg-gray-800/50 rounded-lg p-4 border border-gray-700">
-        {taskList.length > 0 && (
+        {checklistItems.length > 0 ? (
           <>
-            <p className="mb-2 font-semibold text-sm font-manrope">Your Tasks:</p>
-            <ul className="list-disc list-inset space-y-1 text-sm font-manrope">
-              {taskList.map((t, idx) => (
-                <li key={idx}>{t}</li>
+            <p className="mb-2 font-semibold text-sm font-manrope">Checklist:</p>
+            <div className="space-y-2">
+              {checklistItems.map((item) => (
+                <div key={item.id} className="flex items-center space-x-3">
+                  <input
+                    type="checkbox"
+                    checked={item.checked}
+                    onChange={() => handleToggleChecklistItem(item.id)}
+                    className="h-4 w-4 text-accent-500 bg-gray-700 border-gray-600 rounded focus:ring-accent-500"
+                  />
+                  <label
+                    className={`flex-1 text-sm font-manrope ${item.checked ? 'line-through text-gray-400' : ''}`}
+                    onClick={() => handleToggleChecklistItem(item.id)}
+                  >
+                    {item.text}
+                  </label>
+                </div>
               ))}
-            </ul>
+            </div>
           </>
+        ) : (
+          <p className="text-center text-gray-400 text-sm">No checklist items yet.</p>
         )}
       </div>
 
