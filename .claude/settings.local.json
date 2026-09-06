@@ -3,7 +3,9 @@
     "allow": [
       "Bash(npx tsc *)",
       "Bash(npx oxlint *)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(curl *)",
+      "Bash(npm run *)"
     ]
   }
 }

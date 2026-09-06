@@ -60,7 +60,8 @@ export const useTimer = () => {
   });
 
   // Refs for timeout IDs and audio element
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioRef = useRef<AudioContext | null>(null);
+  const resetTimeoutRef = useRef<number | null>(null);
 
   // Load settings and history from localStorage
   useEffect(() => {
@@ -128,6 +129,15 @@ export const useTimer = () => {
     localStorage.setItem(`${HISTORY_KEY}-${todayKey}`, JSON.stringify(state.history));
   }, [state.history]);
 
+  useEffect(() => {
+    return () => {
+      if (resetTimeoutRef.current !== null) {
+        clearTimeout(resetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+
   // Update document title with remaining time
   useEffect(() => {
     const updateTitle = () => {
@@ -173,13 +183,70 @@ export const useTimer = () => {
     return undefined;
   }, [state.endTimestamp, state.isRunning]);
 
-  // Play sound
-  const playSound = useCallback(() => {
-    if (!settings.soundEnabled) return;
-    if (audioRef.current) {
-      audioRef.current.play().catch((e) => console.error('Failed to play sound', e));
+  // Play sound using Web Audio API
+  const playSound = useCallback(async () => {
+    try {
+      if (!settings.soundEnabled || !audioRef.current) return;
+
+      const audioContext = audioRef.current;
+      // Resume context if suspended (autoplay policy)
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      // Create oscillator for beep sound
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      // Configure oscillator for a pleasant beep
+      oscillator.type = 'sine';
+      oscillator.frequency.setValueAtTime(800, audioContext.currentTime); // 800Hz tone
+
+      // Configure gain (volume) - quick attack and decay for a beep
+      gainNode.gain.setValueAtTime(0, audioContext.currentTime);
+      gainNode.gain.linearRampToValueAtTime(0.3, audioContext.currentTime + 0.01); // Attack
+      gainNode.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.3); // Decay
+
+      // Connect nodes
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      // Start and stop the sound
+      oscillator.start(audioContext.currentTime);
+      oscillator.stop(audioContext.currentTime + 0.3);
+    } catch (error) {
+      console.error('Error playing sound:', error);
     }
   }, [settings.soundEnabled]);
+
+  // Pause timer
+  const pauseTimer = useCallback(() => {
+    if (!state.isRunning) return;
+    setState((prev) => ({
+      ...prev,
+      isRunning: false,
+      // We keep endTimestamp to calculate remaining when resuming
+      // remaining will stay as the last value from the effect (which is correct)
+    }));
+  }, [state.isRunning]);
+
+  // Reset timer
+  const resetTimer = useCallback(() => {
+    setState((prev) => {
+      // Reset to work session, but keep sessionCount and history?
+      // Typically reset means starting over, but we might want to keep today's progress?
+      // Let's assume reset means reset the current session only, not the day's progress.
+      // We'll reset the current session to work, with the default work duration.
+      return {
+        ...prev,
+        sessionType: 'work',
+        isRunning: false,
+        endTimestamp: null,
+        remaining: settings.workDuration * 60,
+        task: '', // clear task
+      };
+    });
+  }, [settings.workDuration]);
 
   // Handle session end
   const handleSessionEnd = useCallback(() => {
@@ -215,60 +282,38 @@ export const useTimer = () => {
           }
         : null;
 
-    // Determine next session type
-    let nextSessionType: SessionType;
-    let newSessionCount = state.sessionCount;
-    if (state.sessionType === 'work') {
-      newSessionCount = state.sessionCount + 1;
-      // Every 4 work sessions, the next break is long
-      if (newSessionCount % 4 === 0) {
-        nextSessionType = 'longBreak';
-      } else {
-        nextSessionType = 'shortBreak';
-      }
-    } else {
-      // After a break, next is work
-      nextSessionType = 'work';
+    // Clear any existing reset timeout
+    if (resetTimeoutRef.current !== null) {
+      clearTimeout(resetTimeoutRef.current);
     }
 
-    // Update state
+    // Update state: show completed session (remaining 0), but keep sessionType as completed for label
     setState((prev) => {
-      let updatedHistory = prev.history;
-      if (newHistoryItem) {
-        updatedHistory = [...prev.history, newHistoryItem];
-      }
+      const updatedHistory = newHistoryItem ? [...prev.history, newHistoryItem] : prev.history;
       return {
         ...prev,
-        sessionType: nextSessionType,
-        isRunning: settings.autoStartNext,
-        endTimestamp:
-          settings.autoStartNext
-            ? Date.now() +
-              (nextSessionType === 'work'
-                ? settings.workDuration * 60 * 1000
-                : nextSessionType === 'shortBreak'
-                ? settings.shortBreakDuration * 60 * 1000
-                : settings.longBreakDuration * 60 * 1000)
-            : null,
-        remaining:
-          settings.autoStartNext
-            ? nextSessionType === 'work'
-              ? settings.workDuration * 60
-              : nextSessionType === 'shortBreak'
-                ? settings.shortBreakDuration * 60
-                : settings.longBreakDuration * 60
-            : 0, // if not auto-start, remaining is 0? Actually, we want to show the full duration of the next session so user can start manually.
-        sessionCount: newSessionCount,
-        task: '', // clear task after session ends
+        isRunning: false,
+        remaining: 0,
+        sessionCount: state.sessionType === 'work' ? state.sessionCount + 1 : state.sessionCount,
+        task: '',
         history: updatedHistory,
+        // sessionType remains unchanged (shows completed session type)
+        // endTimestamp remains null
       };
     });
+
+    // Schedule reset after 2 minutes (120000 ms)
+    resetTimeoutRef.current = window.setTimeout(() => {
+      resetTimer();
+      resetTimeoutRef.current = null;
+    }, 2 * 60 * 1000);
   }, [
     state.sessionType,
     state.task,
     state.sessionCount,
     settings,
     playSound,
+    resetTimer,
   ]);
 
   // Start timer
@@ -296,35 +341,6 @@ export const useTimer = () => {
     }));
   }, [state.sessionType, settings.workDuration, settings.shortBreakDuration, settings.longBreakDuration]);
 
-  // Pause timer
-  const pauseTimer = useCallback(() => {
-    if (!state.isRunning) return;
-    setState((prev) => ({
-      ...prev,
-      isRunning: false,
-      // We keep endTimestamp to calculate remaining when resuming
-      // remaining will stay as the last value from the effect (which is correct)
-    }));
-  }, [state.isRunning]);
-
-  // Reset timer
-  const resetTimer = useCallback(() => {
-    setState((prev) => {
-      // Reset to work session, but keep sessionCount and history?
-      // Typically reset means starting over, but we might want to keep today's progress?
-      // Let's assume reset means reset the current session only, not the day's progress.
-      // We'll reset the current session to work, with the default work duration.
-      return {
-        ...prev,
-        sessionType: 'work',
-        isRunning: false,
-        endTimestamp: null,
-        remaining: settings.workDuration * 60,
-        task: '', // clear task
-      };
-    });
-  }, [settings.workDuration]);
-
   // Set task
   const setTask = useCallback((task: string) => {
     setState((prev) => ({
@@ -338,14 +354,14 @@ export const useTimer = () => {
     handleSessionEnd();
   }, [handleSessionEnd]);
 
-  // Initialize audio element
+  // Initialize audio element using Web Audio API for more reliable sound generation
   useEffect(() => {
-    const audio = new Audio(
-      'https://assets.mixkit.co/sfx/preview/mixkit-alarm-digital-clock-beep-989.mp3'
-    );
-    audioRef.current = audio;
+    // Create AudioContext and oscillator for beep sound
+    const AudioContext = window.AudioContext || (window as any).webkitAudioContext;
+    const audioContext = new AudioContext();
+    audioRef.current = audioContext;
     return () => {
-      audioRef.current = null;
+      audioContext.close();
     };
   }, []);
 
